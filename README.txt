@@ -1,0 +1,1 @@
+Simple static flooring system. Upload files in admin.html, calculate, download customer.html, replace customer.html in Netlify/GitHub. No Supabase or Functions.
