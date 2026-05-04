@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Flooring Group Back Office</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+body{font-family:Arial,sans-serif;background:#f5f7fb;padding:20px;color:#111827}.wrap{max-width:1100px;margin:0 auto}.card{background:white;padding:22px;border-radius:16px;margin-bottom:20px;border:1px solid #e5e7eb;box-shadow:0 2px 8px rgba(0,0,0,.04)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}input{width:100%;box-sizing:border-box;padding:12px;margin-top:7px;margin-bottom:12px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}label{font-weight:bold}button{padding:14px;width:100%;border:0;border-radius:10px;background:#111827;color:white;font-size:17px;cursor:pointer;margin-top:10px}.secondary{background:#374151}.status{color:#4b5563;font-size:14px;margin-top:8px}.result{background:white;border:1px solid #e5e7eb;border-radius:16px;padding:20px;margin-top:12px}.big{font-size:24px;font-weight:bold}.badge{display:inline-block;background:#111827;color:white;border-radius:999px;padding:8px 14px;font-weight:bold;margin-top:10px}.price{display:inline-block;background:#f3f4f6;border-radius:999px;padding:8px 14px;font-weight:bold;margin-left:6px}.note{color:#6b7280;line-height:1.5}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Flooring Group Back Office</h1>
+<p class="note">Upload LVT, carpet, and wood pricing files. This calculates groups locally and creates a customer-only app file. No Supabase, no Netlify Functions, no backend credits.</p>
+
+<div class="card">
+<h3>Upload Pricing Files</h3>
+<div class="grid">
+<div><label>LVT File</label><input type="file" id="lvtFile" accept=".xlsx,.xls,.csv"><div id="lvtStatus" class="status">No LVT file selected.</div></div>
+<div><label>Carpet File</label><input type="file" id="carpetFile" accept=".xlsx,.xls,.csv"><div id="carpetStatus" class="status">No carpet file selected.</div></div>
+<div><label>Wood File</label><input type="file" id="woodFile" accept=".xlsx,.xls,.csv"><div id="woodStatus" class="status">No wood file selected.</div></div>
+</div>
+</div>
+
+<div class="card">
+<h3>Pricing Settings</h3>
+<h4>LVT: Material + Freight + Misc + Labor, then ÷ Margin Divisor</h4>
+<div class="grid">
+<label>Freight <input id="lvtFreight" value="0.10"></label>
+<label>Misc <input id="lvtMisc" value="0.05"></label>
+<label>Labor <input id="lvtLabor" value="1.80"></label>
+<label>Margin Divisor <input id="lvtMargin" value="0.68"></label>
+<label>Starting Tier <input id="lvtStart" value="5.00"></label>
+<label>Tier Increment <input id="lvtInc" value="0.50"></label>
+</div>
+<h4>Carpet: Material + Freight + Pad + Labor, then ÷ Margin Divisor</h4>
+<div class="grid">
+<label>Freight <input id="carpetFreight" value="0.00"></label>
+<label>Pad <input id="carpetPad" value="0.00"></label>
+<label>Labor <input id="carpetLabor" value="0.00"></label>
+<label>Margin Divisor <input id="carpetMargin" value="0.68"></label>
+<label>Starting Tier <input id="carpetStart" value="3.00"></label>
+<label>Tier Increment <input id="carpetInc" value="0.50"></label>
+</div>
+<h4>Wood: Material + Freight + Misc + Labor, then ÷ Margin Divisor</h4>
+<div class="grid">
+<label>Freight <input id="woodFreight" value="0.00"></label>
+<label>Misc <input id="woodMisc" value="0.00"></label>
+<label>Labor <input id="woodLabor" value="0.00"></label>
+<label>Margin Divisor <input id="woodMargin" value="0.68"></label>
+<label>Starting Tier <input id="woodStart" value="8.00"></label>
+<label>Tier Increment <input id="woodInc" value="0.50"></label>
+</div>
+<button onclick="calculateAll()">Calculate Products</button>
+<button class="secondary" onclick="downloadCustomerApp()">Download Customer App</button>
+<button class="secondary" onclick="exportTierList()">Export Product Tier List</button>
+<div id="status" class="status"></div>
+</div>
+
+<div class="card">
+<h3>Dashboard Test Lookup</h3>
+<input id="search" placeholder="Search style name or style #">
+<div id="results"></div>
+</div>
+</div>
+
+<script>
+let calculatedProducts=[];
+function money(id){return Number(parseFloat(document.getElementById(id).value)||0)}
+function groupLetter(index){let result="",n=index;while(n>=0){result=String.fromCharCode((n%26)+65)+result;n=Math.floor(n/26)-1}return result}
+function detect(row,names){const keys=Object.keys(row||{});const norm=v=>String(v||"").trim().toLowerCase();return keys.find(k=>names.some(n=>norm(k)===norm(n)))||keys.find(k=>names.some(n=>norm(k).includes(norm(n))))}
+function settings(type){if(type==="lvt")return{freight:money("lvtFreight"),misc:money("lvtMisc"),pad:0,labor:money("lvtLabor"),margin:money("lvtMargin"),start:money("lvtStart"),inc:money("lvtInc")};if(type==="carpet")return{freight:money("carpetFreight"),misc:0,pad:money("carpetPad"),labor:money("carpetLabor"),margin:money("carpetMargin"),start:money("carpetStart"),inc:money("carpetInc")};return{freight:money("woodFreight"),misc:money("woodMisc"),pad:0,labor:money("woodLabor"),margin:money("woodMargin"),start:money("woodStart"),inc:money("woodInc")}}
+async function rowsFromFile(file){if(!file)return[];const data=await file.arrayBuffer();const workbook=XLSX.read(data);return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]],{defval:""})}
+async function processFile(file,type){if(!file)return[];const rows=await rowsFromFile(file);const sample=rows[0]||{};const nameCol=detect(sample,["Supplier Style/Name","Style Name","Style","Name","Product Name"]);const numCol=detect(sample,["Style Style/Item Number","Style Number","StyleNumber","Style #","Style No","Style Num","SKU"]);const costCol=detect(sample,["Cut/Item/Service Cost","Material Cost","Cost","Price","Unit Cost"]);const s=settings(type);return rows.map(r=>{const style_name=String(r[nameCol]||"").trim();const style_number=String(r[numCol]||"").trim();const material_cost=parseFloat(r[costCol]);if(!style_name||!Number.isFinite(material_cost))return null;const total_cost=material_cost+s.freight+s.misc+s.pad+s.labor;const calculated_price=s.margin>0?total_cost/s.margin:total_cost;const tier_price=s.inc>0?Math.ceil(calculated_price/s.inc)*s.inc:calculated_price;const idx=Math.max(0,Math.round((tier_price-s.start)/s.inc));const group_letter=groupLetter(idx);return{product_type:type,style_name,style_number,group_letter,tier_price:Number(tier_price.toFixed(2)),calculated_price:Number(calculated_price.toFixed(2)),material_cost:Number(material_cost.toFixed(2)),total_cost:Number(total_cost.toFixed(2))}}).filter(Boolean)}
+async function calculateAll(){document.getElementById("status").textContent="Calculating...";try{const lvt=await processFile(document.getElementById("lvtFile").files[0],"lvt");const carpet=await processFile(document.getElementById("carpetFile").files[0],"carpet");const wood=await processFile(document.getElementById("woodFile").files[0],"wood");calculatedProducts=[...lvt,...carpet,...wood];document.getElementById("lvtStatus").textContent=document.getElementById("lvtFile").files[0]?`${lvt.length} LVT products calculated.`:"No LVT file selected.";document.getElementById("carpetStatus").textContent=document.getElementById("carpetFile").files[0]?`${carpet.length} carpet products calculated.`:"No carpet file selected.";document.getElementById("woodStatus").textContent=document.getElementById("woodFile").files[0]?`${wood.length} wood products calculated.`:"No wood file selected.";document.getElementById("status").textContent=`${calculatedProducts.length} total products calculated. Download the customer app next.`;renderResults()}catch(err){document.getElementById("status").textContent="ERROR: "+err.message}}
+function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]))}
+function renderResults(){const q=document.getElementById("search").value.trim().toLowerCase();const results=document.getElementById("results");if(!q){results.innerHTML="";return}const matches=calculatedProducts.filter(p=>p.style_name.toLowerCase().includes(q)||String(p.style_number||"").toLowerCase().includes(q)).slice(0,20);if(!matches.length){results.innerHTML='<div class="result">No matching style found in calculated products.</div>';return}results.innerHTML=matches.map(p=>`<div class="result"><div class="big">${escapeHtml(p.style_name)}</div><div>Style #${escapeHtml(p.style_number||"-")} | ${escapeHtml(p.product_type.toUpperCase())}</div><span class="badge">Group ${escapeHtml(p.group_letter)}</span><span class="price">$${p.tier_price.toFixed(2)} Tier</span><div style="margin-top:10px;color:#4b5563;">Material: $${p.material_cost.toFixed(2)} | Total Cost: $${p.total_cost.toFixed(2)} | Calc Price: $${p.calculated_price.toFixed(2)}</div></div>`).join("")}
+document.getElementById("search").addEventListener("input",renderResults);
+function buildCustomerHtml(products){const customerProducts=products.map(p=>({style_name:p.style_name,style_number:p.style_number,group_letter:p.group_letter}));return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Flooring Group Lookup</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;background:#f5f7fb;padding:18px;color:#111827}.wrap{max-width:900px;margin:0 auto}.hero{background:white;border:1px solid #e5e7eb;border-radius:28px;padding:34px;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,.05)}h1{margin:0 0 10px;font-size:42px}.sub{color:#6b7280;font-size:18px;margin:0 0 28px}input{width:100%;box-sizing:border-box;padding:22px;border:1px solid #d1d5db;border-radius:20px;font-size:28px;text-align:center}.result{background:white;border:1px solid #e5e7eb;border-radius:28px;padding:34px;margin-top:20px;text-align:center;box-shadow:0 3px 12px rgba(0,0,0,.05)}.style{font-size:36px;font-weight:700;margin-bottom:8px}.number{font-size:22px;color:#4b5563;margin-bottom:24px}.group{display:inline-block;background:#111827;color:white;border-radius:999px;padding:18px 38px;font-size:44px;font-weight:800}.helper{text-align:center;color:#6b7280;margin-top:22px;font-size:18px}@media(max-width:700px){body{padding:12px}.hero{padding:24px}h1{font-size:30px}input{font-size:22px;padding:18px}.style{font-size:28px}.group{font-size:36px}}</style></head><body><div class="wrap"><div class="hero"><h1>Find Your Flooring Group</h1><p class="sub">Enter the style name or style number from your sample.</p><input id="search" placeholder="Search style name or style #" autocomplete="off"></div><div id="helper" class="helper">Start typing to look up a flooring group.</div><div id="results"></div></div><script>const products=${JSON.stringify(customerProducts)};function normalizeText(value){return String(value||"").trim().toLowerCase().replace(/[ ]+/g," ")}function escapeHtml(value){return String(value||"").replace(/[&<>"']/g,s=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[s]))}function search(){const q=normalizeText(document.getElementById("search").value);const results=document.getElementById("results");const helper=document.getElementById("helper");if(!q){results.innerHTML="";helper.textContent="Start typing to look up a flooring group.";return}const matches=products.filter(p=>normalizeText(p.style_name).includes(q)||normalizeText(p.style_number).includes(q)).slice(0,10);if(!matches.length){results.innerHTML="";helper.textContent="No matching style found.";return}helper.textContent="";results.innerHTML=matches.map(p=>\`<div class="result"><div class="style">\${escapeHtml(p.style_name)}</div><div class="number">Style #\${escapeHtml(p.style_number||"-")}</div><div class="group">Group \${escapeHtml(p.group_letter)}</div></div>\`).join("")}document.getElementById("search").addEventListener("input",search);<\/script></body></html>`}
+function downloadCustomerApp(){if(!calculatedProducts.length){alert("Calculate products first.");return}const html=buildCustomerHtml(calculatedProducts);const blob=new Blob([html],{type:"text/html"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="customer.html";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url)}
+function exportTierList(){if(!calculatedProducts.length){alert("Calculate products first.");return}const rows=calculatedProducts.slice().sort((a,b)=>a.product_type.localeCompare(b.product_type)||a.tier_price-b.tier_price||a.style_name.localeCompare(b.style_name)).map(p=>({ProductType:p.product_type,Group:p.group_letter,TierPrice:p.tier_price,StyleName:p.style_name,StyleNumber:p.style_number,MaterialCost:p.material_cost,TotalCost:p.total_cost,CalculatedPrice:p.calculated_price}));const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Product Tiers");XLSX.writeFile(wb,"flooring-product-tiers.xlsx")}
+</script>
+</body>
+</html>
